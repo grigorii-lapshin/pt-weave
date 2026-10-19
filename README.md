@@ -6,9 +6,12 @@ Learn European Portuguese (PT-PT) from the replies Claude Code already writes yo
 >
 > 🇵🇹 já está — done · mas — but · vou ver — I'll check · depois — later
 
-You learn the words the way a child does: by meeting them in context and guessing what they mean. Once you know a word, the gloss disappears and the Portuguese stays. Over weeks, more of each reply is Portuguese.
+> "We acquire language in only one way, when we understand what people say."
+> — Stephen Krashen ([video, 2:53](https://www.youtube.com/watch?v=doBxlUxVZxY&t=173s))
 
-The idea comes from Olly Richards' video [Everyone is Bad at Languages Until They Learn THIS](https://www.youtube.com/watch?v=doBxlUxVZxY&t=703s), which describes weaving foreign words into everyday context so you can work out their meaning.
+pt-weave is built on that idea, called comprehensible input. A reply about your own code is a message you already understand, so the few Portuguese words in it are easy to guess. Words come back across replies until you know them. Then the gloss drops and the Portuguese stays. Over weeks, more of each reply is Portuguese.
+
+Inspired by Olly Richards' video [Everyone is Bad at Languages Until They Learn THIS](https://www.youtube.com/watch?v=doBxlUxVZxY).
 
 ```bash
 claude plugin install pt-weave --marketplace grigorii-lapshin/pt-weave

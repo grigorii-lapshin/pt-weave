@@ -1,18 +1,28 @@
 {
   "name": "pt-weave",
   "description": "Learn European Portuguese from Claude Code's replies.",
-  "owner": { "name": "Grigorii Lapshin" },
+  "owner": {
+    "name": "Grigorii Lapshin"
+  },
   "plugins": [
     {
       "name": "pt-weave",
       "source": "./",
-      "description": "Learn European Portuguese (PT-PT) while you code. Claude swaps a few English glue words in each reply for Portuguese ones the context makes obvious, glosses them in one footer line, and drops the gloss once you know them.",
-      "author": { "name": "Grigorii Lapshin" },
+      "description": "Learn European Portuguese by comprehensible input. Claude puts a few Portuguese words in each reply where context gives away their meaning, glosses them, and drops the gloss once you know them.",
+      "author": {
+        "name": "Grigorii Lapshin"
+      },
       "homepage": "https://github.com/grigorii-lapshin/pt-weave",
       "repository": "https://github.com/grigorii-lapshin/pt-weave",
       "license": "MIT",
       "category": "learning",
-      "keywords": ["portuguese", "pt-pt", "european-portuguese", "language-learning", "vocabulary"]
+      "keywords": [
+        "portuguese",
+        "pt-pt",
+        "european-portuguese",
+        "language-learning",
+        "vocabulary"
+      ]
     }
   ]
 }
