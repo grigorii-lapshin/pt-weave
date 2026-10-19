@@ -1,6 +1,6 @@
 # pt-weave
 
-Learn European Portuguese (PT-PT) from the replies Claude Code already writes you. No flashcards, no separate app: each reply carries a few Portuguese words whose meaning the sentence gives away, glossed on one footer line.
+Learn European Portuguese (PT-PT) from Claude Code's replies. Each one carries a few Portuguese words the context gives away, glossed in a footer:
 
 > *Já está* — the tests pass, *mas* one is flaky. *Vou ver* the logs *depois*.
 >
@@ -9,7 +9,7 @@ Learn European Portuguese (PT-PT) from the replies Claude Code already writes yo
 > "We acquire language in only one way, when we understand what people say."
 > — Stephen Krashen ([video, 2:53](https://www.youtube.com/watch?v=doBxlUxVZxY&t=173s))
 
-pt-weave is built on that idea, called comprehensible input. A reply about your own code is a message you already understand, so the few Portuguese words in it are easy to guess. Words come back across replies until you know them. Then the gloss drops and the Portuguese stays. Over weeks, more of each reply is Portuguese.
+You already understand a reply about your own code, so its Portuguese words are easy to guess. Once you know a word, its gloss drops and the Portuguese stays.
 
 Inspired by Olly Richards' video [Everyone is Bad at Languages Until They Learn THIS](https://www.youtube.com/watch?v=doBxlUxVZxY).
 
