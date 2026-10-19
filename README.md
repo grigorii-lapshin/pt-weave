@@ -27,6 +27,7 @@ claude plugin install pt-weave --marketplace grigorii-lapshin/pt-weave
 - **Words come back.** If you ask about a graduated word, it returns to the footer until you learn it again.
 - **Progress persists.** Vocabulary is kept across sessions. The status line shows `🇵🇹 <items> · <known> sem tradução`.
 - **Work output stays English.** Code, commit messages, PR text and drafts for other people stay in English. Error reports and destructive-action confirmations stay in English too.
+- **Nothing leaves your machine.** The mod makes no network calls and runs no commands. It reads your prompts and Claude's footers to track words, and keeps only your vocabulary and settings in Claude Code's mod storage.
 
 ## Install
 
