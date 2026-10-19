@@ -1,10 +1,18 @@
 # pt-weave
 
-A Claude Code mod that teaches European Portuguese (PT-PT) while you work. Claude replaces a few English words in each reply with Portuguese ones whose meaning the sentence makes obvious, and glosses them on one footer line:
+Learn European Portuguese (PT-PT) from the replies Claude Code already writes you. No flashcards, no separate app: each reply carries a few Portuguese words whose meaning the sentence gives away, glossed on one footer line.
 
 > *Já está* — the tests pass, *mas* one is flaky. *Vou ver* the logs *depois*.
 >
 > 🇵🇹 já está — done · mas — but · vou ver — I'll check · depois — later
+
+You learn the words the way a child does: by meeting them in context and guessing what they mean. Once you know a word, the gloss disappears and the Portuguese stays. Over weeks, more of each reply is Portuguese.
+
+The idea comes from Olly Richards' video [Everyone is Bad at Languages Until They Learn THIS](https://www.youtube.com/watch?v=doBxlUxVZxY&t=703s), which describes weaving foreign words into everyday context so you can work out their meaning.
+
+```bash
+claude plugin install pt-weave --marketplace grigorii-lapshin/pt-weave
+```
 
 <!-- TODO: add a GIF of a session here -->
 
