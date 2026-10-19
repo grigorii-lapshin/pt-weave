@@ -1,6 +1,6 @@
 {
   "name": "pt-weave",
   "description": "Learn European Portuguese from Claude Code's replies.",
-  "owner": { "name": "grigoriilapshin" },
+  "owner": { "name": "grigorii-lapshin" },
   "plugins": [{ "name": "pt-weave", "source": "./" }]
 }

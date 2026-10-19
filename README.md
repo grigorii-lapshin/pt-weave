@@ -24,18 +24,18 @@ Mods need Claude Code v2.1.287 or later.
 At the prompt of a terminal session:
 
 ```
-/plugin install pt-weave --marketplace grigoriilapshin/pt-weave
+/plugin install pt-weave --marketplace grigorii-lapshin/pt-weave
 ```
 
 From a shell:
 
 ```bash
-claude plugin install pt-weave --marketplace grigoriilapshin/pt-weave
+claude plugin install pt-weave --marketplace grigorii-lapshin/pt-weave
 ```
 
 Answer `y` to add the marketplace, then choose a scope.
 
-In the desktop app: click **+** next to the prompt box, then **Plugins**. Add the marketplace `grigoriilapshin/pt-weave`, then add the plugin.
+In the desktop app: click **+** next to the prompt box, then **Plugins**. Add the marketplace `grigorii-lapshin/pt-weave`, then add the plugin.
 
 ## Commands
 
