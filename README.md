@@ -59,6 +59,18 @@ In the desktop app: click **+** next to the prompt box, then **Plugins**. Add th
 | `/pt more`, `/pt less` | Change the number of new items per reply (1–6, default 3) |
 | `/pt forget <item>` | Remove an item from your vocabulary |
 
+## Make it your own
+
+pt-weave is meant to work without setup. If you want to change how it teaches, fork it and ask Claude to edit your fork:
+
+- `hooks/core.ts`: the core list and its teaching order
+- `hooks/vocab.ts`: the rules Claude follows (`SECTION`), when a word counts as known (`isKnown`), and the per-turn note (`turnNote`)
+- `hooks/register.ts`: the `/pt` commands
+
+Install your fork with `claude plugin install pt-weave --marketplace <you>/pt-weave`. Don't edit the installed copy: updates replace it.
+
+Your progress is stored apart from the code, in `~/.claude/plugins/store/`, so it survives updates. The file is keyed by plugin and marketplace, so switching to a fork may start you with an empty vocabulary.
+
 ## Development
 
 ```bash
