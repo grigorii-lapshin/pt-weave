@@ -1,6 +1,6 @@
 # Handoff: pt-weave 0.2
 
-Goal of 0.2: a complete plugin that works for the general public without setup. Power users fork it (see README, "Make it your own"). Three work areas: new commands, vocabulary expansion, dynamic cognate filter.
+Goal of 0.2: a complete plugin that works for the general public without setup. Power users fork it (see README, "Make it your own"). Four work areas: spaced repetition, new commands, vocabulary expansion, dynamic cognate filter. Do spaced repetition first: the other three build on it.
 
 ## Constraints
 
@@ -10,6 +10,41 @@ Goal of 0.2: a complete plugin that works for the general public without setup. 
 - **No user homework.** The user says what they want in general words; Claude does the work. No commands that make the user type lists of items.
 - **Few knobs.** Defaults must be good. Don't add settings nobody asked for.
 - Bump `version` in `.claude-plugin/plugin.json` to 0.2.0. Keep `tests/pt-weave.test.ts` green and extend it.
+
+## 0. Spaced repetition
+
+### Problem
+
+New words arrive faster than they stick. `turnNote()` always reserves at least one slot for a new item (`fresh = Math.max(1, …)`), so an active day (~40 replies) introduces ~40 new items. Graduation after 5 sightings across 2 days (`FADE_SHOWS`, `FADE_DAYS`) is cramming, and after graduation nothing guarantees a word comes back: known words appear only "wherever they fit".
+
+### Design
+
+- **Schedule per item.** Each entry gets a step and a due day. Review offsets from introduction: days 1, 3, 7, 15, 31, 63 (intervals doubling). Tune later.
+- **Due items fill slots first.** An item counts as reviewed for the day after about 2 appearances; then its due day moves to the next step.
+- **New items only when nothing is due.** Drop the `Math.max(1, …)` floor. When reviews pile up, new items stop until the user catches up.
+- **Gloss drops early, schedule continues.** The footer stops glossing an item after step 2 or 3, but the item stays scheduled. It is *mastered* when it passes the last step.
+- **User signals move the schedule.** Typing the item (`recordUsed`) advances it a step. Asking about it (existing lapse handling) resets it to step 1 with the gloss back.
+- **Free exposure stays.** Items past their gloss keep being used wherever they fit, beyond the slot limit. That is a bonus, not the mechanism.
+- **Slots set the pace.** `/pt more` and `/pt less` now change how fast new items come.
+
+Passive reading is weaker evidence than active recall (Anki), so keep intervals shorter than Anki's and trust the user's signals.
+
+### Expected pace
+
+Assume 3 slots per reply, an item costs ~15 slot uses over its first 63 days (3 on intro day + 6 review days × 2).
+
+| Day type | Replies | Slot uses | New items/day (steady) | 170 glue | 1000 items |
+|---|---|---|---|---|---|
+| Active | ~40 | ~120 | ~8 | ~3 weeks | ~4 months |
+| Light | ~20 | ~60 | ~4 | ~6 weeks | ~8 months |
+
+Early weeks run faster (nothing due yet) and settle as reviews build up. Claude cannot always fit 3 items in a short reply, so real capacity is maybe two thirds of this. For scale, Anki users add 10–20 new cards a day with active recall.
+
+### Data and migration
+
+- Add optional `step?: number` and `due?: string` to `Entry`. Keep `seen`, `used`, `daily`.
+- Migrate 0.1 stores in `normalize()`: items `isKnown` today start at the step where the gloss drops, due today; others start at step 1, due today. Expect a review-heavy first day after the update.
+- `isKnown()` splits in two: "gloss dropped" (step ≥ gloss step, or used) and "mastered" (past last step).
 
 ## 1. New commands
 
@@ -29,14 +64,14 @@ Languages the user already speaks besides the chat language, e.g. `/pt native ru
 
 The point of 0.2 for the author: measure whether this works. Show:
 
-- items known, items learning
-- new items known per week
-- median days from first seen to known
+- items learning, items past their gloss, items mastered (section 0)
+- items due today, new items per week
+- median days from first seen to mastered
 
 Data gaps to fix first:
 
-- No graduation date is stored. Add `knownOn?: string` to `Entry`, set when `isKnown` first turns true (and cleared on lapse).
-- `daily` is trimmed to 30 days (`DAYS_KEPT`), so history must come from `firstSeen` and `knownOn`, not `daily`.
+- No mastery date is stored. Add `masteredOn?: string` to `Entry`, set when an item passes the last step (cleared on lapse).
+- `daily` is trimmed to 30 days (`DAYS_KEPT`), so history must come from `firstSeen` and `masteredOn`, not `daily`.
 
 ### Placement on first run
 
