@@ -1,4 +1,5 @@
 import { CORE } from './core'
+import { FREQUENCY } from './frequency'
 
 export type Entry = {
   gloss: string
@@ -10,6 +11,8 @@ export type Entry = {
   step: number
   due?: string
   masteredOn?: string
+  /** Skipped as a look-alike of a language the user speaks: never offered or reviewed. */
+  transparent?: true
 }
 
 export type Vocab = Record<string, Entry>
@@ -18,11 +21,23 @@ export type Settings = { isOn: boolean; perReply: number; focus?: string; native
 
 export const DEFAULT_SETTINGS: Settings = { isOn: true, perReply: 3 }
 
-const FOOTER = /^\s*[*_]*🇵🇹(?!\s*✓)[*_:\s]*(.+)$/u
-const KNOWN_LINE = /^\s*[*_]*🇵🇹\s*✓[*_:\s]*(.+)$/u
+const FOOTER = /^\s*[*_]*🇵🇹(?!\s*[✓≈])[*_:\s]*(.+)$/u
+const MARK_LINE = { known: /^\s*[*_]*🇵🇹\s*✓[*_:\s]*(.+)$/u, transparent: /^\s*[*_]*🇵🇹\s*≈[*_:\s]*(.+)$/u }
 const SEPARATOR = /\s+[—–=-]\s+|\s*[—–=:]\s*/u
 const MIN_USED_LENGTH = 3
-const ENGLISH_LOOKALIKES = new Set(['era', 'logo', 'nada', 'come', 'sole', 'pronto', 'com', 'sim'])
+// Portuguese items that are also everyday words in another language: writing them in that
+// language is not the user writing Portuguese.
+// ponytail: English plus /pt native languages only; a chat language outside both needs adding here.
+const LOOKALIKES: Record<string, readonly string[]> = {
+  en: ['era', 'logo', 'nada', 'come', 'sole', 'pronto', 'com', 'sim'],
+  es: ['que', 'para', 'por', 'como', 'mas', 'todo', 'toda', 'todos', 'todas', 'nada', 'era', 'sobre', 'entre', 'son', 'solo', 'nunca', 'antes', 'algo', 'menos', 'casa', 'tarde', 'vez', 'ver', 'dar', 'vamos', 'mal', 'tanto', 'cada', 'fui', 'ser', 'estar', 'está', 'esta', 'este', 'desde', 'dos', 'nos', 'final', 'parte', 'grande'],
+  it: ['tempo', 'quando', 'sempre', 'era', 'vai', 'sei', 'ora', 'prima', 'tanto', 'grande', 'parte', 'casa', 'solo', 'nove', 'come', 'vista', 'porta', 'mano', 'pronto', 'sole'],
+  fr: ['que', 'mais', 'son', 'entre', 'mal', 'nos', 'ou', 'grande', 'parte'],
+}
+const LANGUAGE_CODES: Record<string, string> = {
+  english: 'en', spanish: 'es', español: 'es', castellano: 'es', italian: 'it', italiano: 'it', french: 'fr', français: 'fr',
+}
+const CORE_KNOWN_FOR_TIER_2 = 0.8
 const DAYS_KEPT = 30
 const CORE_OFFERED = 6
 const PLACEMENT_ITEMS = 20
@@ -68,6 +83,7 @@ export function normalize(raw: unknown): Vocab {
       if (typeof value.due === 'string') entry.due = value.due
       else delete entry.due
       if (typeof value.masteredOn === 'string') entry.masteredOn = value.masteredOn
+      if (value.transparent === true) entry.transparent = true
     } else {
       // 0.1 store: items past their gloss start at the gloss step; everything is due at once.
       const since = typeof value.lapseDay === 'string' ? value.lapseDay : ''
@@ -138,11 +154,11 @@ export function parseFooter(answer: string): Array<{ word: string; gloss: string
     .filter(w => w.word.length > 0)
 }
 
-/** Items Claude reports the user already knows, on a `🇵🇹✓ a · b` line (placement on first run). */
-export function parseKnownLine(answer: string): string[] {
-  const line = answer.split('\n').find(l => KNOWN_LINE.test(l))
+/** Items Claude reports on a `🇵🇹✓ a · b` line (the user knows them) or `🇵🇹≈ a · b` (transparent to the user). */
+export function parseMarkLine(answer: string, kind: keyof typeof MARK_LINE): string[] {
+  const line = answer.split('\n').find(l => MARK_LINE[kind].test(l))
   if (line === undefined) return []
-  return ((line.match(KNOWN_LINE) ?? [])[1] ?? '')
+  return ((line.match(MARK_LINE[kind]) ?? [])[1] ?? '')
     .split(/\s+·\s+|\s*[,;|]\s*/u)
     .map(item => clean(item).toLowerCase())
     .filter(item => item.length > 0)
@@ -154,7 +170,7 @@ export function markKnown(vocab: Vocab, items: readonly string[], day: string): 
     const entry = vocab[word]
     if (entry !== undefined && isKnown(entry)) continue
     vocab[word] = {
-      gloss: entry?.gloss || (CORE.find(item => item.pt === word)?.en ?? ''),
+      gloss: entry?.gloss || glossOf(word),
       seen: entry?.seen ?? 0,
       used: entry?.used ?? 0,
       daily: entry?.daily ?? {},
@@ -167,6 +183,28 @@ export function markKnown(vocab: Vocab, items: readonly string[], day: string): 
   }
   return marked
 }
+
+export function markTransparent(vocab: Vocab, items: readonly string[], day: string): string[] {
+  const marked: string[] = []
+  for (const word of items) {
+    if (vocab[word]?.transparent) continue
+    const entry = vocab[word]
+    vocab[word] = {
+      gloss: entry?.gloss || glossOf(word),
+      seen: entry?.seen ?? 0,
+      used: entry?.used ?? 0,
+      daily: entry?.daily ?? {},
+      firstSeen: entry?.firstSeen ?? day,
+      lastSeen: entry?.lastSeen ?? day,
+      step: LAST_STEP + 1,
+      transparent: true,
+    }
+    marked.push(word)
+  }
+  return marked
+}
+
+const glossOf = (word: string) => [...CORE, ...FREQUENCY].find(item => item.pt === word)?.en ?? ''
 
 export type Seen = { added: string[]; faded: string[]; relearned: string[] }
 
@@ -201,6 +239,7 @@ export function recordSeen(
       entry.step = 1
       entry.due = addDays(day, INTERVALS[0] as number)
       delete entry.masteredOn
+      delete entry.transparent
       seen.relearned.push(word)
     }
     entry.seen += 1
@@ -214,11 +253,16 @@ export function recordSeen(
   return seen
 }
 
-export function recordUsed(vocab: Vocab, text: string, day: string): string[] {
+export function lookalikes(native = ''): Set<string> {
+  const codes = ['en', ...native.toLowerCase().split(/[\s,;/]+/).map(lang => LANGUAGE_CODES[lang] ?? lang)]
+  return new Set(codes.flatMap(code => LOOKALIKES[code] ?? []))
+}
+
+export function recordUsed(vocab: Vocab, text: string, day: string, skip: ReadonlySet<string> = lookalikes()): string[] {
   const lower = ` ${text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ')} `
   const used: string[] = []
   for (const [word, entry] of Object.entries(vocab)) {
-    if (word.length < MIN_USED_LENGTH || ENGLISH_LOOKALIKES.has(word)) continue
+    if (word.length < MIN_USED_LENGTH || skip.has(word)) continue
     if (!lower.includes(` ${word} `)) continue
     entry.used += 1
     advance(entry, day)
@@ -235,6 +279,17 @@ export function nextCore(vocab: Vocab, count: number) {
   return CORE.filter(item => vocab[item.pt] === undefined).slice(0, count)
 }
 
+/** Tier 2 opens once most of the glue core is past its gloss. */
+export function isTier2Open(vocab: Vocab): boolean {
+  const known = CORE.filter(item => vocab[item.pt] !== undefined && isKnown(vocab[item.pt] as Entry)).length
+  return known >= CORE.length * CORE_KNOWN_FOR_TIER_2
+}
+
+export function nextItems(vocab: Vocab, count: number) {
+  const tiers = isTier2Open(vocab) ? [...CORE, ...FREQUENCY] : CORE
+  return tiers.filter(item => vocab[item.pt] === undefined).slice(0, count)
+}
+
 export function turnNote(vocab: Vocab, settings: Settings, usedNow: readonly string[], day: string): string {
   const entries = Object.entries(vocab)
   const known = entries.filter(([, e]) => isKnown(e)).sort((a, b) => b[1].lastSeen.localeCompare(a[1].lastSeen))
@@ -245,7 +300,7 @@ export function turnNote(vocab: Vocab, settings: Settings, usedNow: readonly str
   const glossed = review.filter(([, e]) => !isKnown(e))
   const quiet = review.filter(([, e]) => isKnown(e))
   const fresh = settings.perReply - review.length
-  const offered = nextCore(vocab, CORE_OFFERED)
+  const offered = nextItems(vocab, CORE_OFFERED)
   const lines = [
     `[pt-weave] Up to ${settings.perReply} Portuguese items to teach in this reply, reviews first. ${entries.length} woven so far, ${known.length} past their gloss, ${due.length} due for review.`,
   ]
@@ -260,21 +315,24 @@ export function turnNote(vocab: Vocab, settings: Settings, usedNow: readonly str
       `First run: before weaving, ask the user once, in one short question, which of these they already know: ${nextCore(vocab, PLACEMENT_ITEMS).map(i => i.pt).join(', ')}.`,
     )
   }
+  lines.push(
+    `Transparent to this user, so never an item: look-alikes of the language they write in${settings.native ? ` or of ${settings.native}` : ''}.`,
+  )
   if (fresh > 0 && settings.focus !== undefined) {
-    lines.push(`The user wants new items for: ${settings.focus}. When one fits, introduce it in place of a core item.`)
+    lines.push(`The user wants new items for: ${settings.focus}. When one fits, introduce it in place of a listed item.`)
   }
   if (fresh === 0) {
     lines.push('No new items this reply: reviews are due.')
   } else if (offered.length > 0) {
     lines.push(
-      `Introduce at most ${fresh} new, taken from the core list in this order, skipping one only when it cannot fit: ${offered.map(i => `${i.pt} (${i.en})`).join(', ')}.`,
+      `Introduce at most ${fresh} new, taken from the word list in this order, skipping one only when it cannot fit or is transparent: ${offered.map(i => `${i.pt} (${i.en})`).join(', ')}.`,
     )
   } else {
     lines.push(`Introduce at most ${fresh} new glue word${fresh === 1 ? '' : 's'} or tense form${fresh === 1 ? '' : 's'} of your choice.`)
   }
   if (known.length > 0) {
     lines.push(
-      `Past their gloss: use each wherever it fits, beyond the limit, in place of the English; italic, but leave them out of the footer: ${known.slice(0, 80).map(([w]) => w).join(', ')}.`,
+      `Past their gloss: use each wherever it fits, beyond the limit, in place of the user's language; italic, but leave them out of the footer: ${known.slice(0, 80).map(([w]) => w).join(', ')}.`,
     )
   }
   if (known.length >= 25) {
@@ -296,7 +354,7 @@ function table(rows: Array<[string, Entry]>, day: string): string[] {
     `  ${pad('item', 16)}${pad('meaning', 26)}${pad('shown', 7)}${pad('today', 7)}${pad('days', 6)}${pad('used', 6)}${pad('last', 12)}due`,
     ...rows.map(
       ([w, e]) =>
-        `  ${pad(w, 16)}${pad(e.gloss, 26)}${pad(String(e.seen), 7)}${pad(String(e.daily[day] ?? 0), 7)}${pad(String(Object.keys(e.daily).length), 6)}${pad(String(e.used), 6)}${pad(e.lastSeen, 12)}${e.due ?? 'mastered'}`,
+        `  ${pad(w, 16)}${pad(e.gloss, 26)}${pad(String(e.seen), 7)}${pad(String(e.daily[day] ?? 0), 7)}${pad(String(Object.keys(e.daily).length), 6)}${pad(String(e.used), 6)}${pad(e.lastSeen, 12)}${e.due ?? (e.transparent ? 'transparent' : 'mastered')}`,
     ),
   ]
 }
@@ -307,7 +365,8 @@ export function summary(vocab: Vocab, settings: Settings, day: string): string {
   const learning = entries.filter(([, e]) => !isKnown(e)).sort(byCore)
   const shown = entries.reduce((n, [, e]) => n + e.seen, 0)
   const today = entries.reduce((n, [, e]) => n + (e.daily[day] ?? 0), 0)
-  const mastered = entries.filter(([, e]) => isMastered(e))
+  const mastered = entries.filter(([, e]) => isMastered(e) && !e.transparent)
+  const transparent = entries.filter(([, e]) => e.transparent).length
   const due = entries.filter(([, e]) => isDue(e, day)).length
   const weekAgo = addDays(day, -7)
   const newThisWeek = entries.filter(([, e]) => e.firstSeen > weekAgo).length
@@ -317,10 +376,12 @@ export function summary(vocab: Vocab, settings: Settings, day: string): string {
   const prefs = [settings.focus && `Focus: ${settings.focus}.`, settings.native && `Also speaks: ${settings.native}.`].filter(Boolean)
   const coreIn = CORE.filter(item => vocab[item.pt] !== undefined)
   const coreKnown = coreIn.filter(item => isKnown(vocab[item.pt] as Entry))
+  const freqIn = FREQUENCY.filter(item => vocab[item.pt] !== undefined).length
   return [
     `pt-weave is ${settings.isOn ? 'on' : 'off'}, ${settings.perReply} per reply. ${plural(entries.length, 'item')}, ${known.length} known. Shown ${plural(shown, 'time')}, ${today} today.${prefs.length > 0 ? ` ${prefs.join(' ')}` : ''}`,
-    `Learning ${learning.length} · past their gloss ${known.length - mastered.length} · mastered ${mastered.length} · due today ${due} · new this week ${newThisWeek} · median days to mastery ${toMastery ?? '—'}`,
+    `Learning ${learning.length} · past their gloss ${known.length - mastered.length} · mastered ${mastered.length} · transparent ${transparent} · due today ${due} · new this week ${newThisWeek} · median days to mastery ${toMastery ?? '—'}`,
     `Core list: ${coreIn.length}/${CORE.length} introduced, ${coreKnown.length} past their gloss. Next: ${nextCore(vocab, 8).map(i => i.pt).join(', ') || 'done'}.`,
+    `Frequency list: ${isTier2Open(vocab) ? `${freqIn}/${FREQUENCY.length} introduced.` : `opens at ${Math.ceil(CORE.length * CORE_KNOWN_FOR_TIER_2)} core items past their gloss.`}`,
     '',
     `A aprender (${learning.length}):`,
     ...table(learning, day),
@@ -347,7 +408,7 @@ export function coreListing(vocab: Vocab): string {
 
 export const SECTION = `# European Portuguese, woven in (pt-weave)
 
-The user is learning European Portuguese (PT-PT, the Lisbon norm) by inference: items picked up from context, the way a child learns "nariz" while someone points at a nose. Content words that look like English or Russian (importante, problema, sistema, versão, teste) teach nothing; the hard part is the glue: ser/estar, ter, ir, fazer, poder, prepositions, connectors, adverbs like já/ainda/só, pronouns, and the simple past and future. Weave those.
+The user is learning European Portuguese (PT-PT, the Lisbon norm) by inference: items picked up from context, the way a child learns "nariz" while someone points at a nose. Items transparent to the user teach nothing: look-alikes of the language they write in, or of a language the [pt-weave] note says they speak (importante, problema, sistema, versão, teste for most European languages); the hard part is the glue: ser/estar, ter, ir, fazer, poder, prepositions, connectors, adverbs like já/ainda/só, pronouns, and the simple past and future. Weave those.
 
 In your final reply to the user each turn:
 
@@ -357,6 +418,7 @@ In your final reply to the user each turn:
 - Use European forms, never Brazilian: "estou a fazer" (not "fazendo"), tu-forms, se calhar, ecrã, ficheiro, utilizador, equipa, telemóvel.
 - End the reply with one line glossing the Portuguese items that still need it, exactly as written (the inflected form or the chunk): \`🇵🇹 já está — done · vou ver — I'll check\`. Nothing else goes on that line. Write no such line when none needs a gloss.
 - A note tagged [pt-weave] beside the user's prompt names the items to reuse, the reviews that are due, the next ones from the core list, and the ones past their gloss. Follow it: due reviews come before new items. Items past their gloss are how Portuguese gradually takes over: prefer them to the English every time they fit, and leave them out of the footer.
+- When you skip an offered item because it is transparent to the user, add a line \`🇵🇹≈ item · item\` just above the footer, so it is not offered again.
 - If the user tells you which Portuguese items they already know (you may have asked on the first run), add a line \`🇵🇹✓ item · item\` listing them, exactly as the core list writes them, just above the footer.
 - If the user stumbles on an item past its gloss (asks about it, or misreads it), gloss it in the footer again: that puts it back into learning.
 - Keep Portuguese out of everything that is not conversation with the user: code, comments, commands, file contents, commit messages, PR text, drafts for Slack, Asana or email, and prompts for subagents. If you are a subagent, ignore this section.

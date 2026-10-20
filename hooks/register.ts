@@ -5,9 +5,11 @@ import {
   coreListing,
   SECTION,
   isKnown,
+  lookalikes,
   markKnown,
+  markTransparent,
   normalize,
-  parseKnownLine,
+  parseMarkLine,
   italicItems,
   parseFooter,
   recordSeen,
@@ -68,7 +70,7 @@ export const register: Register = on => {
     if (!settings.isOn) return next(e)
     const vocab = await loadVocab($)
     const day = await today($)
-    const used = recordUsed(vocab, e.text, day)
+    const used = recordUsed(vocab, e.text, day, lookalikes(settings.native))
     if (used.length > 0) await $.store.set('vocab', vocab)
     const isComposing = (await $.clock.now()) - Number((await $.store.get('composedAt')) ?? 0) < COMPOSE_FRESH_MS
     const note = turnNote(vocab, settings, used, day)
@@ -80,15 +82,18 @@ export const register: Register = on => {
       const vocab = await loadVocab($)
       const glossed = parseFooter(e.answer)
       const plain = italicItems(e.answer, vocab)
-      const placed = parseKnownLine(e.answer)
-      if (glossed.length > 0 || plain.length > 0 || placed.length > 0) {
+      const placed = parseMarkLine(e.answer, 'known')
+      const skipped = parseMarkLine(e.answer, 'transparent')
+      if (glossed.length > 0 || plain.length > 0 || placed.length > 0 || skipped.length > 0) {
         const day = await today($)
         const seen = recordSeen(vocab, glossed, plain, day)
         const known = markKnown(vocab, placed, day)
+        const transparent = markTransparent(vocab, skipped, day)
         await $.store.set('vocab', vocab)
         showStatus($, vocab, await loadSettings($))
         const news = [
           known.length > 0 ? `Já sabes: ${known.join(', ')}` : '',
+          transparent.length > 0 ? `Transparente: ${transparent.join(', ')}` : '',
           seen.added.length > 0 ? `Novo: ${seen.added.join(', ')}` : '',
           seen.faded.length > 0 ? `Sem tradução: ${seen.faded.join(', ')}` : '',
           seen.relearned.length > 0 ? `De volta: ${seen.relearned.join(', ')}` : '',

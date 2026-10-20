@@ -1,6 +1,6 @@
 {
   "name": "pt-weave",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Weaves European Portuguese words into Claude's replies where context gives away their meaning, and tracks your vocabulary across sessions.",
   "author": { "name": "Grigorii Lapshin" }
 }

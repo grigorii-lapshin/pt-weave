@@ -1,5 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import { CORE } from '../hooks/core'
+import { FREQUENCY } from '../hooks/frequency'
+
 const DAY = Date.UTC(2026, 9, 15)
 
 const pt = (args: string) => ({
@@ -66,7 +69,7 @@ test('a word the user writes loses its gloss', async ($, on) => {
   const listed = await $.command.run(pt(''))
 
   expect(context.join('\n')).toContain('no longer need a gloss: ainda não')
-  expect(context.join('\n')).toContain('core list in this order, skipping one only when it cannot fit: é (')
+  expect(context.join('\n')).toContain('word list in this order, skipping one only when it cannot fit or is transparent: é (')
   expect(listed.text).toContain('1 item, 1 known')
 })
 
@@ -150,7 +153,7 @@ test('an item is mastered after its last review and leaves the schedule', async 
   await $.turn.complete(answer('*Mas* it passed.'))
   const listed = await $.command.run(pt(''))
 
-  expect(listed.text).toContain('Learning 0 · past their gloss 0 · mastered 1 · due today 0 · new this week 1 · median days to mastery 5')
+  expect(listed.text).toContain('Learning 0 · past their gloss 0 · mastered 1 · transparent 0 · due today 0 · new this week 1 · median days to mastery 5')
   expect(listed.text).toMatch(/mas\s+but\s+.*mastered/)
 })
 
@@ -257,4 +260,61 @@ test('the first-run question names the first core items', async ($, on) => {
   await $.prompt.submit({ text: 'hi', wait: false, origin: { kind: 'composer' } })
 
   expect(note.context).toContain('which of these they already know: é, está, não, mas')
+})
+
+test('a ≈ line marks offered items transparent, so they are never offered or reviewed', async ($, on) => {
+  mock.store(on, { vocab: { 'mas': scheduled(2, '2026-10-20', 'but') } })
+  mock.clock(on, { now: DAY })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  const note = noted(on)
+
+  await $.turn.complete(answer('Fine.\n\n🇵🇹≈ é · está'))
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+  const listed = await $.command.run(pt(''))
+
+  expect(note.context).toContain('in this order, skipping one only when it cannot fit or is transparent: não (')
+  expect(note.context).not.toContain('Due for review')
+  expect(listed.text).toContain('mastered 0 · transparent 2 · due today 0')
+  expect(listed.text).toMatch(/é\s+is \(permanent, ser\)\s+.*transparent/)
+})
+
+test('the note names the languages the user speaks', async ($, on) => {
+  mock.store(on, { settings: { isOn: true, perReply: 3, native: 'ru' } })
+  mock.clock(on, { now: DAY })
+  const note = noted(on)
+
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+
+  expect(note.context).toContain('look-alikes of the language they write in or of ru.')
+})
+
+test('a Portuguese look-alike in a language the user speaks does not count as using it', async ($, on) => {
+  const vocab = { 'para': scheduled(1, '2026-10-20', 'for'), 'sempre': scheduled(1, '2026-10-20', 'always') }
+  mock.store(on, { vocab, settings: { isOn: true, perReply: 3, native: 'Spanish' } })
+  mock.clock(on, { now: DAY })
+  noted(on)
+
+  await $.prompt.submit({ text: 'es para mañana, sempre', wait: false, origin: { kind: 'composer' } })
+  const listed = await $.command.run(pt(''))
+
+  expect(listed.text).toMatch(/para\s+for\s+\d+\s+\d+\s+\d+\s+0\s/)
+  expect(listed.text).toMatch(/sempre\s+always\s+\d+\s+\d+\s+\d+\s+1\s/)
+})
+
+test('the frequency list opens once 80% of the core is past its gloss', async ($, on) => {
+  const opening = Math.ceil(CORE.length * 0.8)
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  const vocab = Object.fromEntries(CORE.map((i, n) => [i.pt, scheduled(n < opening ? 3 : 1, '2026-10-30', i.en)]))
+  mock.store(on, { vocab })
+  mock.clock(on, { now: DAY })
+  const note = noted(on)
+
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+  const open = await $.command.run(pt(''))
+  await $.turn.complete(answer(`*${CORE[0]?.pt}*.\n\n🇵🇹 ${CORE[0]?.pt} — ${CORE[0]?.en}`))
+  const closed = await $.command.run(pt(''))
+
+  expect(note.context).toContain(`is transparent: ${FREQUENCY[0]?.pt} (`)
+  expect(open.text).toContain(`Frequency list: 0/${FREQUENCY.length} introduced.`)
+  expect(closed.text).toContain(`Frequency list: opens at ${opening} core items past their gloss.`)
 })
