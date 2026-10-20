@@ -5,7 +5,9 @@ import {
   coreListing,
   SECTION,
   isKnown,
+  markKnown,
   normalize,
+  parseKnownLine,
   italicItems,
   parseFooter,
   recordSeen,
@@ -43,8 +45,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'pt',
-      description: 'Portuguese vocabulary and show stats: core, on, off, more, less, forget <item>',
-      argumentHint: '[core|on|off|more|less|forget <item>]',
+      description: 'Show your Portuguese progress, or tune it: core, on, off, more, less, focus, native, forget',
+      argumentHint: '[core|on|off|more|less|focus <area>|native <languages>|forget <item>]',
       immediate: true,
     })
     showStatus($, await loadVocab($), await loadSettings($))
@@ -78,11 +80,15 @@ export const register: Register = on => {
       const vocab = await loadVocab($)
       const glossed = parseFooter(e.answer)
       const plain = italicItems(e.answer, vocab)
-      if (glossed.length > 0 || plain.length > 0) {
-        const seen = recordSeen(vocab, glossed, plain, await today($))
+      const placed = parseKnownLine(e.answer)
+      if (glossed.length > 0 || plain.length > 0 || placed.length > 0) {
+        const day = await today($)
+        const seen = recordSeen(vocab, glossed, plain, day)
+        const known = markKnown(vocab, placed, day)
         await $.store.set('vocab', vocab)
         showStatus($, vocab, await loadSettings($))
         const news = [
+          known.length > 0 ? `Já sabes: ${known.join(', ')}` : '',
           seen.added.length > 0 ? `Novo: ${seen.added.join(', ')}` : '',
           seen.faded.length > 0 ? `Sem tradução: ${seen.faded.join(', ')}` : '',
           seen.relearned.length > 0 ? `De volta: ${seen.relearned.join(', ')}` : '',
@@ -95,7 +101,8 @@ export const register: Register = on => {
 
   on('command.run', { command: 'pt' }, async ($, e) => {
     const [verb = '', ...rest] = e.args.trim().split(/\s+/)
-    const word = rest.join(' ').toLowerCase()
+    const arg = rest.join(' ')
+    const word = arg.toLowerCase()
     const settings = await loadSettings($)
     const vocab = await loadVocab($)
 
@@ -108,6 +115,11 @@ export const register: Register = on => {
       case 'less':
         settings.perReply = Math.min(6, Math.max(1, settings.perReply + (verb.toLowerCase() === 'more' ? 1 : -1)))
         break
+      case 'focus':
+      case 'native':
+        if (arg.length > 0) settings[verb.toLowerCase() as 'focus' | 'native'] = arg
+        else delete settings[verb.toLowerCase() as 'focus' | 'native']
+        break
       case 'forget':
         if (vocab[word] === undefined) return { text: `"${word}" is not in the vocabulary.` }
         delete vocab[word]
@@ -119,7 +131,7 @@ export const register: Register = on => {
       case 'list':
         break
       default:
-        return { text: 'Usage: /pt [core|on|off|more|less|forget <item>]' }
+        return { text: 'Usage: /pt [core|on|off|more|less|focus <area>|native <languages>|forget <item>]' }
     }
 
     await $.store.set('settings', settings)

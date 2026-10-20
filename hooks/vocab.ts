@@ -14,16 +14,18 @@ export type Entry = {
 
 export type Vocab = Record<string, Entry>
 
-export type Settings = { isOn: boolean; perReply: number }
+export type Settings = { isOn: boolean; perReply: number; focus?: string; native?: string }
 
 export const DEFAULT_SETTINGS: Settings = { isOn: true, perReply: 3 }
 
-const FOOTER = /^\s*[*_]*🇵🇹[*_:\s]*(.+)$/u
+const FOOTER = /^\s*[*_]*🇵🇹(?!\s*✓)[*_:\s]*(.+)$/u
+const KNOWN_LINE = /^\s*[*_]*🇵🇹\s*✓[*_:\s]*(.+)$/u
 const SEPARATOR = /\s+[—–=-]\s+|\s*[—–=:]\s*/u
 const MIN_USED_LENGTH = 3
 const ENGLISH_LOOKALIKES = new Set(['era', 'logo', 'nada', 'come', 'sole', 'pronto', 'com', 'sim'])
 const DAYS_KEPT = 30
 const CORE_OFFERED = 6
+const PLACEMENT_ITEMS = 20
 const LEGACY_FADE_SHOWS = 5
 const LEGACY_FADE_DAYS = 2
 // Days until the next review on entering each step: offsets 1, 3, 7, 15, 31, 63 from introduction.
@@ -136,6 +138,36 @@ export function parseFooter(answer: string): Array<{ word: string; gloss: string
     .filter(w => w.word.length > 0)
 }
 
+/** Items Claude reports the user already knows, on a `🇵🇹✓ a · b` line (placement on first run). */
+export function parseKnownLine(answer: string): string[] {
+  const line = answer.split('\n').find(l => KNOWN_LINE.test(l))
+  if (line === undefined) return []
+  return ((line.match(KNOWN_LINE) ?? [])[1] ?? '')
+    .split(/\s+·\s+|\s*[,;|]\s*/u)
+    .map(item => clean(item).toLowerCase())
+    .filter(item => item.length > 0)
+}
+
+export function markKnown(vocab: Vocab, items: readonly string[], day: string): string[] {
+  const marked: string[] = []
+  for (const word of items) {
+    const entry = vocab[word]
+    if (entry !== undefined && isKnown(entry)) continue
+    vocab[word] = {
+      gloss: entry?.gloss || (CORE.find(item => item.pt === word)?.en ?? ''),
+      seen: entry?.seen ?? 0,
+      used: entry?.used ?? 0,
+      daily: entry?.daily ?? {},
+      firstSeen: entry?.firstSeen ?? day,
+      lastSeen: entry?.lastSeen ?? day,
+      step: GLOSS_STEP,
+      due: addDays(day, INTERVALS[GLOSS_STEP - 1] as number),
+    }
+    marked.push(word)
+  }
+  return marked
+}
+
 export type Seen = { added: string[]; faded: string[]; relearned: string[] }
 
 export function recordSeen(
@@ -223,6 +255,14 @@ export function turnNote(vocab: Vocab, settings: Settings, usedNow: readonly str
   if (quiet.length > 0) {
     lines.push(`Due for review, use each about twice, no gloss: ${quiet.map(([w]) => w).join(', ')}.`)
   }
+  if (entries.length === 0) {
+    lines.push(
+      `First run: before weaving, ask the user once, in one short question, which of these they already know: ${nextCore(vocab, PLACEMENT_ITEMS).map(i => i.pt).join(', ')}.`,
+    )
+  }
+  if (fresh > 0 && settings.focus !== undefined) {
+    lines.push(`The user wants new items for: ${settings.focus}. When one fits, introduce it in place of a core item.`)
+  }
   if (fresh === 0) {
     lines.push('No new items this reply: reviews are due.')
   } else if (offered.length > 0) {
@@ -267,12 +307,19 @@ export function summary(vocab: Vocab, settings: Settings, day: string): string {
   const learning = entries.filter(([, e]) => !isKnown(e)).sort(byCore)
   const shown = entries.reduce((n, [, e]) => n + e.seen, 0)
   const today = entries.reduce((n, [, e]) => n + (e.daily[day] ?? 0), 0)
-  const mastered = entries.filter(([, e]) => isMastered(e)).length
+  const mastered = entries.filter(([, e]) => isMastered(e))
   const due = entries.filter(([, e]) => isDue(e, day)).length
+  const weekAgo = addDays(day, -7)
+  const newThisWeek = entries.filter(([, e]) => e.firstSeen > weekAgo).length
+  const toMastery = median(
+    mastered.flatMap(([, e]) => (e.masteredOn === undefined ? [] : [(Date.parse(e.masteredOn) - Date.parse(e.firstSeen)) / 86_400_000])),
+  )
+  const prefs = [settings.focus && `Focus: ${settings.focus}.`, settings.native && `Also speaks: ${settings.native}.`].filter(Boolean)
   const coreIn = CORE.filter(item => vocab[item.pt] !== undefined)
   const coreKnown = coreIn.filter(item => isKnown(vocab[item.pt] as Entry))
   return [
-    `pt-weave is ${settings.isOn ? 'on' : 'off'}, ${settings.perReply} per reply. ${plural(entries.length, 'item')}, ${known.length} known. Shown ${plural(shown, 'time')}, ${today} today. ${mastered} mastered, ${due} due for review.`,
+    `pt-weave is ${settings.isOn ? 'on' : 'off'}, ${settings.perReply} per reply. ${plural(entries.length, 'item')}, ${known.length} known. Shown ${plural(shown, 'time')}, ${today} today.${prefs.length > 0 ? ` ${prefs.join(' ')}` : ''}`,
+    `Learning ${learning.length} · past their gloss ${known.length - mastered.length} · mastered ${mastered.length} · due today ${due} · new this week ${newThisWeek} · median days to mastery ${toMastery ?? '—'}`,
     `Core list: ${coreIn.length}/${CORE.length} introduced, ${coreKnown.length} past their gloss. Next: ${nextCore(vocab, 8).map(i => i.pt).join(', ') || 'done'}.`,
     '',
     `A aprender (${learning.length}):`,
@@ -281,6 +328,13 @@ export function summary(vocab: Vocab, settings: Settings, day: string): string {
     `Já sabes, no gloss (${known.length}):`,
     ...table(known, day),
   ].join('\n')
+}
+
+function median(values: number[]): number | undefined {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  if (sorted.length === 0) return undefined
+  return sorted.length % 2 === 1 ? sorted[mid] : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
 }
 
 export function coreListing(vocab: Vocab): string {
@@ -303,6 +357,7 @@ In your final reply to the user each turn:
 - Use European forms, never Brazilian: "estou a fazer" (not "fazendo"), tu-forms, se calhar, ecrã, ficheiro, utilizador, equipa, telemóvel.
 - End the reply with one line glossing the Portuguese items that still need it, exactly as written (the inflected form or the chunk): \`🇵🇹 já está — done · vou ver — I'll check\`. Nothing else goes on that line. Write no such line when none needs a gloss.
 - A note tagged [pt-weave] beside the user's prompt names the items to reuse, the reviews that are due, the next ones from the core list, and the ones past their gloss. Follow it: due reviews come before new items. Items past their gloss are how Portuguese gradually takes over: prefer them to the English every time they fit, and leave them out of the footer.
+- If the user tells you which Portuguese items they already know (you may have asked on the first run), add a line \`🇵🇹✓ item · item\` listing them, exactly as the core list writes them, just above the footer.
 - If the user stumbles on an item past its gloss (asks about it, or misreads it), gloss it in the footer again: that puts it back into learning.
 - Keep Portuguese out of everything that is not conversation with the user: code, comments, commands, file contents, commit messages, PR text, drafts for Slack, Asana or email, and prompts for subagents. If you are a subagent, ignore this section.
 - Never let it cost clarity: leave it out of error reports, security warnings, confirmations of destructive actions and any sentence the user must act on precisely.

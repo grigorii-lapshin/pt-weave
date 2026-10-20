@@ -150,7 +150,7 @@ test('an item is mastered after its last review and leaves the schedule', async 
   await $.turn.complete(answer('*Mas* it passed.'))
   const listed = await $.command.run(pt(''))
 
-  expect(listed.text).toContain('1 mastered, 0 due for review.')
+  expect(listed.text).toContain('Learning 0 · past their gloss 0 · mastered 1 · due today 0 · new this week 1 · median days to mastery 5')
   expect(listed.text).toMatch(/mas\s+but\s+.*mastered/)
 })
 
@@ -214,4 +214,47 @@ test('entries stored in the first format still load', async ($, on) => {
   expect(context.join('\n')).toContain('leave them out of the footer: não')
   expect(listed.text).toMatch(/não\s+not\s+1\s+1\s+1\s+1\s+2026-10-15/)
   expect(context.join('\n')).toContain('Due for review, use each about twice, no gloss: não.')
+})
+
+test('/pt focus and /pt native are stored, shown, and focus steers new items', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: DAY })
+  const note = noted(on)
+
+  await $.command.run(pt('focus Restaurants and ordering food'))
+  const listed = await $.command.run(pt('native ru'))
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+  const cleared = await $.command.run(pt('focus'))
+
+  expect(listed.text).toContain('Focus: Restaurants and ordering food. Also speaks: ru.')
+  expect(note.context).toContain('The user wants new items for: Restaurants and ordering food.')
+  expect(cleared.text).not.toContain('Focus:')
+  expect(cleared.text).toContain('Also speaks: ru.')
+})
+
+test('first run asks which core items the user knows, and a ✓ line marks them known', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: DAY })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  const note = noted(on)
+
+  await $.prompt.submit({ text: 'hi', wait: false, origin: { kind: 'composer' } })
+  await $.turn.complete(answer('Noted, I will skip those.\n\n🇵🇹✓ é · não · mas\n🇵🇹 também — also'))
+  await $.prompt.submit({ text: 'next', wait: false, origin: { kind: 'composer' } })
+  const listed = await $.command.run(pt(''))
+
+  expect(note.context).not.toContain('First run')
+  expect(listed.text).toContain('4 items, 3 known.')
+  expect(listed.text).toMatch(/A aprender \(1\)[\s\S]*também\s+also/)
+  expect(listed.text).toMatch(/é\s+is \(permanent, ser\)\s+0\s+0\s+0\s+0\s+2026-10-15\s+2026-10-19/)
+})
+
+test('the first-run question names the first core items', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: DAY })
+  const note = noted(on)
+
+  await $.prompt.submit({ text: 'hi', wait: false, origin: { kind: 'composer' } })
+
+  expect(note.context).toContain('which of these they already know: é, está, não, mas')
 })
