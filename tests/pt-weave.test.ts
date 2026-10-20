@@ -92,23 +92,77 @@ const learning = (seen: number, days: string[]) => ({
   lastSeen: days[days.length - 1] ?? '2026-10-10',
 })
 
-test('an item loses its gloss after five shows over two days, still counted from italics', async ($, on) => {
-  mock.store(on, { vocab: { 'ainda não': learning(4, ['2026-10-14']) } })
-  mock.clock(on, { now: DAY })
-  on('turn.complete', ($, e) => ({ text: e.answer }))
-  let context: readonly string[] = []
+const scheduled = (step: number, due: string | undefined, gloss = 'not yet') => ({
+  ...learning(1, ['2026-10-10']),
+  gloss,
+  step,
+  ...(due === undefined ? {} : { due }),
+})
+
+const noted = (on: Parameters<Parameters<typeof test>[1]>[1]) => {
+  const box = { context: '' }
   on('prompt.submit', ($, e) => {
-    context = e.context ?? []
+    box.context = (e.context ?? []).join('\n')
     return { text: e.text }
   })
+  return box
+}
+
+test('a due item passes its review after two shows and drops its gloss at step 3', async ($, on) => {
+  mock.store(on, { vocab: { 'ainda não': scheduled(2, '2026-10-15') } })
+  mock.clock(on, { now: DAY })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  const note = noted(on)
+
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+  expect(note.context).toContain('Reuse where they fit (still learning): ainda não (not yet)')
 
   await $.turn.complete(answer('*Ainda não* — the deploy is queued.\n\n🇵🇹 ainda não — not yet'))
   await $.turn.complete(answer('*Ainda não*, still queued.'))
   await $.prompt.submit({ text: 'and now?', wait: false, origin: { kind: 'composer' } })
   const listed = await $.command.run(pt(''))
 
-  expect(context.join('\n')).toContain('leave them out of the footer: ainda não')
-  expect(listed.text).toMatch(/Já sabes, no gloss \(1\)[\s\S]*ainda não\s+not yet\s+6\s+2\s+2/)
+  expect(note.context).toContain('leave them out of the footer: ainda não')
+  expect(note.context).not.toContain('Reuse where they fit')
+  expect(listed.text).toMatch(/Já sabes, no gloss \(1\)[\s\S]*ainda não\s+not yet\s+3\s+2\s+2\s+0\s+2026-10-15\s+2026-10-19/)
+})
+
+test('new items stop while reviews fill every slot', async ($, on) => {
+  mock.store(on, {
+    vocab: { 'já': scheduled(1, '2026-10-14'), 'mas': scheduled(4, '2026-10-15'), 'também': scheduled(1, '2026-10-15') },
+  })
+  mock.clock(on, { now: DAY })
+  const note = noted(on)
+
+  await $.prompt.submit({ text: 'go', wait: false, origin: { kind: 'composer' } })
+
+  expect(note.context).toContain('No new items this reply')
+  expect(note.context).not.toContain('Introduce')
+  expect(note.context).toContain('Due for review, use each about twice, no gloss: mas.')
+})
+
+test('an item is mastered after its last review and leaves the schedule', async ($, on) => {
+  mock.store(on, { vocab: { 'mas': scheduled(6, '2026-10-15', 'but') } })
+  mock.clock(on, { now: DAY })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+
+  await $.turn.complete(answer('*Mas* one is flaky, *mas* only on CI.'))
+  await $.turn.complete(answer('*Mas* it passed.'))
+  const listed = await $.command.run(pt(''))
+
+  expect(listed.text).toContain('1 mastered, 0 due for review.')
+  expect(listed.text).toMatch(/mas\s+but\s+.*mastered/)
+})
+
+test('typing an item moves it a step along', async ($, on) => {
+  mock.store(on, { vocab: { 'também': scheduled(4, '2026-10-15', 'also') } })
+  mock.clock(on, { now: DAY })
+  noted(on)
+
+  await $.prompt.submit({ text: 'também the API', wait: false, origin: { kind: 'composer' } })
+  const listed = await $.command.run(pt(''))
+
+  expect(listed.text).toMatch(/também\s+also\s+.*2026-10-31/)
 })
 
 test('glossing a faded item again puts it back into learning', async ($, on) => {
@@ -159,4 +213,5 @@ test('entries stored in the first format still load', async ($, on) => {
 
   expect(context.join('\n')).toContain('leave them out of the footer: não')
   expect(listed.text).toMatch(/não\s+not\s+1\s+1\s+1\s+1\s+2026-10-15/)
+  expect(context.join('\n')).toContain('Due for review, use each about twice, no gloss: não.')
 })

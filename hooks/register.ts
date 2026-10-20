@@ -65,10 +65,11 @@ export const register: Register = on => {
     const settings = await loadSettings($)
     if (!settings.isOn) return next(e)
     const vocab = await loadVocab($)
-    const used = recordUsed(vocab, e.text)
+    const day = await today($)
+    const used = recordUsed(vocab, e.text, day)
     if (used.length > 0) await $.store.set('vocab', vocab)
     const isComposing = (await $.clock.now()) - Number((await $.store.get('composedAt')) ?? 0) < COMPOSE_FRESH_MS
-    const note = turnNote(vocab, settings, used)
+    const note = turnNote(vocab, settings, used, day)
     return next({ ...e, context: [...(e.context ?? []), isComposing ? note : `${SECTION}\n\n${note}`] })
   })
 

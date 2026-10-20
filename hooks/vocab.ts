@@ -7,8 +7,9 @@ export type Entry = {
   daily: Record<string, number>
   firstSeen: string
   lastSeen: string
-  lapseSeen?: number
-  lapseDay?: string
+  step: number
+  due?: string
+  masteredOn?: string
 }
 
 export type Vocab = Record<string, Entry>
@@ -23,10 +24,17 @@ const MIN_USED_LENGTH = 3
 const ENGLISH_LOOKALIKES = new Set(['era', 'logo', 'nada', 'come', 'sole', 'pronto', 'com', 'sim'])
 const DAYS_KEPT = 30
 const CORE_OFFERED = 6
-const FADE_SHOWS = 5
-const FADE_DAYS = 2
+const LEGACY_FADE_SHOWS = 5
+const LEGACY_FADE_DAYS = 2
+// Days until the next review on entering each step: offsets 1, 3, 7, 15, 31, 63 from introduction.
+const INTERVALS = [1, 2, 4, 8, 16, 32]
+const LAST_STEP = INTERVALS.length
+const GLOSS_STEP = 3
+const REVIEW_SHOWS = 2
 const ITALIC = /(?<![*_\p{L}])[*_]([^*_\n]+?)[*_](?![*_\p{L}])/gu
 const RANK = new Map(CORE.map((item, i) => [item.pt, i]))
+
+const addDays = (day: string, n: number) => new Date(Date.parse(day) + n * 86_400_000).toISOString().slice(0, 10)
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
@@ -41,25 +49,57 @@ export function normalize(raw: unknown): Vocab {
         ? (value.daily as Record<string, number>)
         : Object.fromEntries(days.map(day => [day, 1]))
     const lastSeen = String(value.lastSeen ?? Object.keys(daily).sort().pop() ?? '')
-    vocab[word] = {
+    const seen = Number(value.seen ?? 0)
+    const used = Number(value.used ?? 0)
+    const entry: Entry = {
       gloss: String(value.gloss ?? ''),
-      seen: Number(value.seen ?? 0),
-      used: Number(value.used ?? 0),
+      seen,
+      used,
       daily,
       firstSeen: String(value.firstSeen ?? lastSeen),
       lastSeen,
-      ...(typeof value.lapseSeen === 'number' ? { lapseSeen: value.lapseSeen } : {}),
-      ...(typeof value.lapseDay === 'string' ? { lapseDay: value.lapseDay } : {}),
+      step: 1,
+      due: lastSeen,
     }
+    if (typeof value.step === 'number') {
+      entry.step = value.step
+      if (typeof value.due === 'string') entry.due = value.due
+      else delete entry.due
+      if (typeof value.masteredOn === 'string') entry.masteredOn = value.masteredOn
+    } else {
+      // 0.1 store: items past their gloss start at the gloss step; everything is due at once.
+      const since = typeof value.lapseDay === 'string' ? value.lapseDay : ''
+      const days = Object.keys(daily).filter(day => day >= since).length
+      const shows = seen - (typeof value.lapseSeen === 'number' ? value.lapseSeen : 0)
+      if (used >= 1 || (shows >= LEGACY_FADE_SHOWS && days >= LEGACY_FADE_DAYS)) entry.step = GLOSS_STEP
+    }
+    vocab[word] = entry
   }
   return vocab
 }
 
+/** Past its gloss: the footer no longer translates it. */
 export function isKnown(entry: Entry): boolean {
-  if (entry.used >= 1) return true
-  const since = entry.lapseDay ?? ''
-  const days = Object.keys(entry.daily).filter(day => day >= since).length
-  return entry.seen - (entry.lapseSeen ?? 0) >= FADE_SHOWS && days >= FADE_DAYS
+  return entry.used >= 1 || entry.step >= GLOSS_STEP
+}
+
+export function isMastered(entry: Entry): boolean {
+  return entry.step > LAST_STEP
+}
+
+export function isDue(entry: Entry, day: string): boolean {
+  return entry.due !== undefined && entry.due <= day
+}
+
+function advance(entry: Entry, day: string) {
+  if (isMastered(entry)) return
+  entry.step += 1
+  if (isMastered(entry)) {
+    entry.masteredOn = day
+    delete entry.due
+  } else {
+    entry.due = addDays(day, INTERVALS[entry.step - 1] as number)
+  }
 }
 
 export function italicItems(answer: string, vocab: Vocab): string[] {
@@ -110,15 +150,25 @@ export function recordSeen(
   for (const [word, gloss] of items) {
     const entry = vocab[word]
     if (entry === undefined) {
-      vocab[word] = { gloss, seen: 1, used: 0, daily: { [day]: 1 }, firstSeen: day, lastSeen: day }
+      vocab[word] = {
+        gloss,
+        seen: 1,
+        used: 0,
+        daily: { [day]: 1 },
+        firstSeen: day,
+        lastSeen: day,
+        step: 1,
+        due: addDays(day, INTERVALS[0] as number),
+      }
       seen.added.push(word)
       continue
     }
     const wasKnown = isKnown(entry)
     if (wasKnown && gloss.length > 0) {
       entry.used = 0
-      entry.lapseSeen = entry.seen
-      entry.lapseDay = day
+      entry.step = 1
+      entry.due = addDays(day, INTERVALS[0] as number)
+      delete entry.masteredOn
       seen.relearned.push(word)
     }
     entry.seen += 1
@@ -126,25 +176,23 @@ export function recordSeen(
     if (gloss.length > 0) entry.gloss = gloss
     entry.daily[day] = (entry.daily[day] ?? 0) + 1
     entry.daily = Object.fromEntries(Object.entries(entry.daily).sort().slice(-DAYS_KEPT))
+    if (isDue(entry, day) && (entry.daily[day] ?? 0) >= REVIEW_SHOWS) advance(entry, day)
     if (!wasKnown && isKnown(entry)) seen.faded.push(word)
   }
   return seen
 }
 
-export function recordUsed(vocab: Vocab, text: string): string[] {
+export function recordUsed(vocab: Vocab, text: string, day: string): string[] {
   const lower = ` ${text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ')} `
   const used: string[] = []
   for (const [word, entry] of Object.entries(vocab)) {
     if (word.length < MIN_USED_LENGTH || ENGLISH_LOOKALIKES.has(word)) continue
     if (!lower.includes(` ${word} `)) continue
     entry.used += 1
+    advance(entry, day)
     used.push(word)
   }
   return used
-}
-
-function byOldest(a: [string, Entry], b: [string, Entry]): number {
-  return a[1].lastSeen.localeCompare(b[1].lastSeen) || a[1].seen - b[1].seen
 }
 
 function byCore(a: [string, Entry], b: [string, Entry]): number {
@@ -155,20 +203,29 @@ export function nextCore(vocab: Vocab, count: number) {
   return CORE.filter(item => vocab[item.pt] === undefined).slice(0, count)
 }
 
-export function turnNote(vocab: Vocab, settings: Settings, usedNow: readonly string[]): string {
+export function turnNote(vocab: Vocab, settings: Settings, usedNow: readonly string[], day: string): string {
   const entries = Object.entries(vocab)
-  const learning = entries.filter(([, e]) => !isKnown(e)).sort(byOldest)
   const known = entries.filter(([, e]) => isKnown(e)).sort((a, b) => b[1].lastSeen.localeCompare(a[1].lastSeen))
-  const review = learning.slice(0, Math.max(1, settings.perReply - 1))
-  const fresh = Math.max(1, settings.perReply - review.length)
+  const due = entries
+    .filter(([, e]) => isDue(e, day))
+    .sort((a, b) => (a[1].due as string).localeCompare(b[1].due as string) || byCore(a, b))
+  const review = due.slice(0, settings.perReply)
+  const glossed = review.filter(([, e]) => !isKnown(e))
+  const quiet = review.filter(([, e]) => isKnown(e))
+  const fresh = settings.perReply - review.length
   const offered = nextCore(vocab, CORE_OFFERED)
   const lines = [
-    `[pt-weave] Up to ${settings.perReply} glossed Portuguese items in this reply. ${entries.length} woven so far, ${known.length} past their gloss.`,
+    `[pt-weave] Up to ${settings.perReply} Portuguese items to teach in this reply, reviews first. ${entries.length} woven so far, ${known.length} past their gloss, ${due.length} due for review.`,
   ]
-  if (review.length > 0) {
-    lines.push(`Reuse where they fit (still learning): ${review.map(([w, e]) => `${w} (${e.gloss})`).join(', ')}.`)
+  if (glossed.length > 0) {
+    lines.push(`Reuse where they fit (still learning): ${glossed.map(([w, e]) => `${w} (${e.gloss})`).join(', ')}.`)
   }
-  if (offered.length > 0) {
+  if (quiet.length > 0) {
+    lines.push(`Due for review, use each about twice, no gloss: ${quiet.map(([w]) => w).join(', ')}.`)
+  }
+  if (fresh === 0) {
+    lines.push('No new items this reply: reviews are due.')
+  } else if (offered.length > 0) {
     lines.push(
       `Introduce at most ${fresh} new, taken from the core list in this order, skipping one only when it cannot fit: ${offered.map(i => `${i.pt} (${i.en})`).join(', ')}.`,
     )
@@ -196,10 +253,10 @@ function pad(text: string, width: number): string {
 function table(rows: Array<[string, Entry]>, day: string): string[] {
   if (rows.length === 0) return ['  (none)']
   return [
-    `  ${pad('item', 16)}${pad('meaning', 26)}${pad('shown', 7)}${pad('today', 7)}${pad('days', 6)}${pad('used', 6)}last`,
+    `  ${pad('item', 16)}${pad('meaning', 26)}${pad('shown', 7)}${pad('today', 7)}${pad('days', 6)}${pad('used', 6)}${pad('last', 12)}due`,
     ...rows.map(
       ([w, e]) =>
-        `  ${pad(w, 16)}${pad(e.gloss, 26)}${pad(String(e.seen), 7)}${pad(String(e.daily[day] ?? 0), 7)}${pad(String(Object.keys(e.daily).length), 6)}${pad(String(e.used), 6)}${e.lastSeen}`,
+        `  ${pad(w, 16)}${pad(e.gloss, 26)}${pad(String(e.seen), 7)}${pad(String(e.daily[day] ?? 0), 7)}${pad(String(Object.keys(e.daily).length), 6)}${pad(String(e.used), 6)}${pad(e.lastSeen, 12)}${e.due ?? 'mastered'}`,
     ),
   ]
 }
@@ -210,10 +267,12 @@ export function summary(vocab: Vocab, settings: Settings, day: string): string {
   const learning = entries.filter(([, e]) => !isKnown(e)).sort(byCore)
   const shown = entries.reduce((n, [, e]) => n + e.seen, 0)
   const today = entries.reduce((n, [, e]) => n + (e.daily[day] ?? 0), 0)
+  const mastered = entries.filter(([, e]) => isMastered(e)).length
+  const due = entries.filter(([, e]) => isDue(e, day)).length
   const coreIn = CORE.filter(item => vocab[item.pt] !== undefined)
   const coreKnown = coreIn.filter(item => isKnown(vocab[item.pt] as Entry))
   return [
-    `pt-weave is ${settings.isOn ? 'on' : 'off'}, ${settings.perReply} per reply. ${plural(entries.length, 'item')}, ${known.length} known. Shown ${plural(shown, 'time')}, ${today} today.`,
+    `pt-weave is ${settings.isOn ? 'on' : 'off'}, ${settings.perReply} per reply. ${plural(entries.length, 'item')}, ${known.length} known. Shown ${plural(shown, 'time')}, ${today} today. ${mastered} mastered, ${due} due for review.`,
     `Core list: ${coreIn.length}/${CORE.length} introduced, ${coreKnown.length} past their gloss. Next: ${nextCore(vocab, 8).map(i => i.pt).join(', ') || 'done'}.`,
     '',
     `A aprender (${learning.length}):`,
@@ -243,7 +302,7 @@ In your final reply to the user each turn:
 - Write each Portuguese item in italics, correct for PT-PT. Do not translate it inline. Never spend a slot on a transparent cognate; use those freely without listing them.
 - Use European forms, never Brazilian: "estou a fazer" (not "fazendo"), tu-forms, se calhar, ecrã, ficheiro, utilizador, equipa, telemóvel.
 - End the reply with one line glossing the Portuguese items that still need it, exactly as written (the inflected form or the chunk): \`🇵🇹 já está — done · vou ver — I'll check\`. Nothing else goes on that line. Write no such line when none needs a gloss.
-- A note tagged [pt-weave] beside the user's prompt names the items to reuse, the next ones from the core list, and the ones past their gloss. Follow it. Items past their gloss are how Portuguese gradually takes over: prefer them to the English every time they fit, and leave them out of the footer.
+- A note tagged [pt-weave] beside the user's prompt names the items to reuse, the reviews that are due, the next ones from the core list, and the ones past their gloss. Follow it: due reviews come before new items. Items past their gloss are how Portuguese gradually takes over: prefer them to the English every time they fit, and leave them out of the footer.
 - If the user stumbles on an item past its gloss (asks about it, or misreads it), gloss it in the footer again: that puts it back into learning.
 - Keep Portuguese out of everything that is not conversation with the user: code, comments, commands, file contents, commit messages, PR text, drafts for Slack, Asana or email, and prompts for subagents. If you are a subagent, ignore this section.
 - Never let it cost clarity: leave it out of error reports, security warnings, confirmations of destructive actions and any sentence the user must act on precisely.
